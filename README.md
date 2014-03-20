@@ -26,7 +26,7 @@ It's created and developed by Anthony Ogundipe, CEO of [DHTMLExtreme](http://www
 Create `index.php`:
 ```
 <?php
-include dirname(dirname(__FILE__)).'/lib/dhtmlframework.php';
+require 'lib/dhtmlframework.php';
 dispatch('/', 'index');
 function index() {
     return '<p>Welcome to our page.</p>';
