@@ -40,7 +40,7 @@ run();
 
 For more information on how to use this framework to create web applications, see:
 
-* our [Website](https://dhtmlframework.com) for much more.
+* our [Website](http://dhtmlframework.com) for much more.
 * our [Wiki](https://github.com/dhtml/dhtmlframework/wiki) for much more.
 
 ## Community
