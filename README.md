@@ -6,7 +6,6 @@ create multiple websites in a single installation as long as the websites reside
 
 It's created and developed by Anthony Ogundipe, CEO of [DHTMLExtreme](http://www.dhtmlextreme.net).
 
-
 ## Features
 
 * Web apps written in modern HTML5, CSS3, JS, PHP and MySQL.
@@ -20,7 +19,8 @@ It's created and developed by Anthony Ogundipe, CEO of [DHTMLExtreme](http://www
 ## Quick Start
 * Download the [zip master](https://github.com/dhtml/dhtmlframework/archive/master.zip)
 * Extract the zip master into your web directory
-* Open the examples folder to view the packaged usage examples
+* Open the examples folder to check out the basic and advanced functionalities.
+* You can test all our [examples online](http://www.dhtmlframework.com/examples)
 
 
 Create `index.php`:

@@ -83,9 +83,14 @@ if(function_exists('set_magic_quotes_runtime') && get_magic_quotes_runtime()) se
 function dispatch($path,$handler) {
 global $routes;
 $routes["$path"]=array( 
-            'request' => $path, 
+            'path' => $path, 
             'action' => $handler, 
         );
+}
+
+function crosslink($path,$handler,$mime='text/html',$disposition='inline') {
+global $links;
+$links["$path"]=Array('action'=>$handler,'mime'=>$mime,'disposition'=>$disposition);
 }
 
 //retrieve arguments
@@ -101,21 +106,49 @@ global $params;
 $params[$name]=$value;
 }
 
-function theme($template,$data) {
-global $theme_url,$theme_path,$base_url,$site_theme;
+function theme() {
+global $theme_url,$theme_path,$base_url,$site_theme,$sitevars,$sitevars2,$paths;
 
+$sitevars2=Array();
+
+$argc = func_num_args(); //arguments count
+$argv = func_get_args(); //arguments value
+
+if($argc==0) {
+$default=option('view');
+if(is_array($default)) {
+$argc=count($default);
+$argv=$default;
+} else {
+return "";
+}
+}
+
+
+if(is_array($sitevars)) {extract($sitevars);$sitevars2=array_merge($sitevars,$sitevars2);$sitevars=Array();}
+
+//parse through all supplied templates
+$theme_uri=rpath($site_theme).'/'; //default theme uri
+
+foreach($argv as $template) {
 $uri=$site_theme.'/'.$template;
 $local=lpath($uri);
-$theme_uri=rpath($site_theme).'/';
+
 if(!file_exists($local)) {$results=("Theme not initialized");}
 else {
-if(is_array($data)) {extract($data);}
+if(is_array($sitevars)) {extract($sitevars);$sitevars2=array_merge($sitevars,$sitevars2);$sitevars=Array();}
+
 ob_start();
 include $local;
-$results=ob_get_contents();
+$content=ob_get_contents();
 ob_end_clean();
 }
-return utf8_encode($results);
+
+}
+//d($sitevars);
+$sitevars=$sitevars2;//reset value to what it should be
+
+return utf8_encode($content);
 }
 
 function redirect($path,$resolve=true) {
@@ -140,8 +173,6 @@ function option($name = null, $values = null)
 }
 
 
-
-
 //evaluate a function
 function eval_func($func,$data='') {
 if (function_exists("{$func}")) {
@@ -160,42 +191,195 @@ function print_if($print,$cond1,$cond2) {
 if($cond1==$cond2) {return $print;}
 }
 
+
+//load plugins here
+function load_plugins() {
+global $plugins;
+
+$ext_dir=option('ext_dir');
+$ext=(array) option('ext');
+if(empty($ext_dir)||empty($ext)) {return;}
+
+$ext_dir=lpath($ext_dir);
+
+foreach($ext as $plugin) {
+$path=$ext_dir.DS.$plugin.DS.$plugin.'.php';
+if(file_exists($path)) {
+$plugins[$plugin]=Array('name'=>$plugin,'path'=>$path);
+include "$path";
+
+}
+}
+
+
+dispatch_hook('init');
+}
+
+//call hook for all classes
+function dispatch_hook($hook,&$arg1=null,&$arg2=null,&$arg3=null,&$arg4=null,&$arg5=null,&$arg6=null) {
+global $plugins,$hooks;
+
+if(empty($plugins)) {return false;}
+$argc = func_num_args(); //arguments count
+$argv = func_get_args(); //arguments value
+
+$hooks[]=$hook; //cache all called hooks
+
+if($argc>1) {
+   for ($i = 1; $i < $argc; $i++) {
+   $args[]='$arg'.$i;
+    }
+$args=implode(',',$args);
+}
+
+$hook="hook_{$hook}";
+foreach(array_keys($plugins) as $plugin) {
+//echo "<li>==>($plugin) $hook</li>";
+
+if($hook=="hook_init") {
+$p=$plugins[$plugin];
+$args="'$plugin','{$p[path]}'";
+}
+
+$fx="$plugin::$hook";
+if(method_exists($plugin,$hook)) {
+try {eval("$fx(".$args.");");} catch(Exception $e) {continue;}
+}
+}
+return;
+}
+
+function getPluginInfo($plugin) {
+global $plugins;
+return $plugins[$plugin];
+}
+
+function deval($str) {
+try {eval($str);} catch(Exception $e) {return false;}
+return true;
+}
+
+function doLog($text)
+{
+  // open log file
+  $filename = lpath("activity.log");
+
+  $bFile=(!($fh=@fopen($filename,"a"))) ? false : true;
+  if(!$bFile) {return false;}
+
+  //$fh = fopen($filename, "a") or die("Could not open log file.");
+  fwrite($fh, date("d-m-Y, H:i")." - $text\n") or die("Could not write file!");
+  fclose($fh);
+  return true;
+}
+
+//update paths in case hook has changed it
+function AlterPaths() {
+global $paths,$base_url,$browser_path_complete, $base_path, $base_root,$browser_path_full,$browser_full_path,$browser_path,$browser_url,$theme_path,$site_theme,$theme_url,$theme_path;
+extract($paths);
+}
+
+function init_theme_engine() {
+global $paths;
+$path=lpath($paths['site_theme'].'/theme.engine.php');
+
+if(!file_exists($path)) {return false;}
+include $path;
+if(function_exists('phptemplate_init')) {phptemplate_init($paths);}
+}
+
 function run() {
 eval_func('configure'); //call configure if it exists
-conf_init(); //initialize paths
+load_plugins();
+path_init(); //initialize paths
+//initialize theme engine
+init_theme_engine();
 
-global $routes,$params,$paths,$url,$datapack,$req,$arguments;
-$req[]=array_merge(array_values($routes),Array('controller'=>CONTROLLER,'param'=>$params));	
+global $links,$routes,$params,$paths,$url,$datapack,$req,$arguments,$router;
 
-Route::$request[]=$req[0];
+dispatch_hook('path',$paths);
+AlterPaths(); //in case it has been changed
 
 $url=$_GET['q'];
-//die($url);
 if($url=="" && !empty($_SERVER['QUERY_STRING'])) {$url=$_SERVER['QUERY_STRING'];}
+
+dispatch_hook('controller',$url);
+
+//check for mirror links start
+if(isset($links["$url"])) {
+$data=$links["$url"];
+$action=$data['action'];
+//$links["$path"]=Array('action'=>$handler,'mime'=>$mime,'disposition'=>$disposition);
+$basename=basename($url);
+header("Content-type: ".$data['mime']);
+header('Content-Disposition: '.$data['disposition'].'; filename="'.$basename.'"');
+
+if(function_exists($action)) {
+echo eval_func($action);
+} else {
+$action=lpath($action);
+
+if(file_exists($action)) {
+echo file_get_contents($action);
+} else {
+echo "File not found.";
+}
+
+}
+//check other options
+
+exit();
+}
+//check for mirror links end
+
+
+dispatch_hook('route',$routes);
+
+
+$router = new Router();
+//check for matchTypes
+loadMatchTypes();
+//preload routes from array
+foreach($routes as $route) {
+$router->map($route['path'],$route['action']);
+}
+//$router->dump();
+
 
 //create arguments array
 $arguments=explode('/',$url);
+if(!empty($url)) {$url="/$url";} else {$url="/";} //current url
 
-if(!empty($url)) {$url="/$url";} //current url
+exportToDataPack(Array('url'=>$url,'requests'=>$req,'globals'=>$paths,'links'=>$links));
 
+$route = $router->match("$url");
 
-$datapack=Array('url'=>$url,'requests'=>$req,'globals'=>$paths);
-
-$route=Route::matchURI("$url");
-
+global $status; 
+/**
+100 - check router confige - handler is missing
+200 - normal loading
+404 - page not found
+*/
 if(!empty($route)) {
+//route is fine, so attempt to load
 $cb=$route["action"];
- if(!function_exists($cb)) {$content="Please check router config";} else {$content=eval_func($cb,$url);}
+ if(!function_exists($cb)) {$content="Please check router config";$status=100;} else {$content=eval_func($cb,$url);$status=200;}
 } else {
 //404 error page
-$route=Route::matchURI('/404');
+$status=404;
+$cb=option('404');
 
-if(!empty($route)) {
-$cb=$route["action"];
+if(!empty($cb)) {
  if(!function_exists($cb)) {$content="Please check router config";} else {$content=eval_func($cb,$url);}
-} else {die("Please define 404 handler");}
+} else {die("Page Not Found.");}
 
 }
+
+
+dispatch_hook('content',$content,$status);
+
+
+//global $hooks;d($hooks);
 
 echo $content;
 }
@@ -203,60 +387,170 @@ echo $content;
 
 
 //library starts
-    Class Route 
-    { 
-        //TRAP REQUESTS ARRAY: 
-        public static $request; 
-        private static $param; 
+/*
+This router is a simplified version of AltoRouter from https://github.com/dannyvankooten/AltoRouter
+*/
+
+function addMatchTypes($mt) {
+global $MatchTypes;
+$MatchTypes[]=$mt;
+}
+
+function loadMatchTypes() {
+global $router,$MatchTypes;
+if(empty($MatchTypes)) {return;}
+foreach($MatchTypes as $mt) {
+if(is_array($mt)) {$router->addMatchTypes($mt);}
+}
+}
+
+class Router {
+	protected $routes = array();
+	protected $namedRoutes = array();
+	protected $matchTypes = array(
+		'i'  => '[0-9]++',
+		'a'  => '[0-9A-Za-z]++',
+		'h'  => '[0-9A-Fa-f]++',
+		'*'  => '.+?',
+		'**' => '.++',
+		''   => '[^/\.]++'
+	);
+
+	public function __construct( $routes = array(), $basePath = '', $matchTypes = array() ) {
+		$this->addMatchTypes($matchTypes);
+
+		foreach( $routes as $route ) {
+			call_user_func_array(array($this,'map'),$route);
+		}
+	}
+
+	public function addMatchTypes($matchTypes) {
+		$this->matchTypes = array_merge($this->matchTypes, $matchTypes);
+	}
+
+	
+	public function map($route,$name = null) {
+		$this->routes[] = array($route, $name);
+		if($name) {
+			if(isset($this->namedRoutes[$name])) {
+				throw new Exception("Can not redeclare route '{$name}'");
+			} else {
+				$this->namedRoutes[$name] = $route;
+			}
+		}
+		return;
+	}
+
+	public function dump() {
+		d($this->routes);
+	}
 
 
-        public static function matchURI($uri = null) { 
-            $uri = (!$uri) ? $_SERVER['PATH_INFO'] : $uri; 
-            $uri = (!$uri) ? '/' : rtrim($uri,"\/"); 
-            if(!empty(self::$request)) { 
-                $count=count(self::$request); 
-                for($i=0; $i<$count; ++$i) { 
-                    foreach(self::$request[$i] as $k => $v) { 
-                        if (is_array($v) and $k !== 'param') { 
-                            self::$param = self::$request[$i]['param']; 
-                            $v['request'] = preg_replace_callback("/\<(?<key>[0-9a-z_]+)\>/", 
-                                'Route::_replacer', 
-                                str_replace(")",")?", $v['request']) 
-                            ); 
-                            $rulleTemp = array_merge((array)self::$request[$i], (array)$v); 
-                            if(($t = self::_reportRulle($rulleTemp, $uri))) 
-                                return $t; 
-                        } 
-                    } 
-                } 
+	public function match($requestUrl, $requestMethod = null) {
+		$params = array();
+		$match = false;
 
-            } else return array(); 
-        } 
+		
+		$_REQUEST = $_GET;
+		//var_dump($this->routes);
+		foreach($this->routes as $handler) {
+			list($_route,$name) = $handler;
 
-        private static function _replacer($matches) { 
-            if(isset(self::$param[$matches['key']])) { 
-                return "(?<".$matches['key'].">".self::$param[$matches['key']].")"; 
-            } else return "(?<".$matches['key'].">"."([^/]+)".")"; 
-        } 
 
-        private static function _reportRulle($ini_array, $uri) { 
-			if(is_array($ini_array) and $uri) { 
-                if(@preg_match("#^".$ini_array['request']."$#", $uri, $match)){ 
-                    $r = array_merge((array)$ini_array, (array)$match); 
-                    foreach($r as $k => $v) 
-                        if((int)$k OR $k == 'param' OR $k == 'request') 
-                            unset($r[$k]); 
-                    return $r; 
-                } 
-            } 
-        } 
-        /** =================================================================== **/ 
-    }
+			// Check for a wildcard (matches all)
+			if ($_route === '*') {
+				$match = true;
+			} elseif (isset($_route[0]) && $_route[0] === '@') {
+				$match = preg_match('`' . substr($_route, 1) . '`', $requestUrl, $params);
+			} else {
+				$route = null;
+				$regex = false;
+				$j = 0;
+				$n = isset($_route[0]) ? $_route[0] : null;
+				$i = 0;
+
+				// Find the longest non-regex substring and match it against the URI
+				while (true) {
+					if (!isset($_route[$i])) {
+						break;
+					} elseif (false === $regex) {
+						$c = $n;
+						$regex = $c === '[' || $c === '(' || $c === '.';
+						if (false === $regex && false !== isset($_route[$i+1])) {
+							$n = $_route[$i + 1];
+							$regex = $n === '?' || $n === '+' || $n === '*' || $n === '{';
+						}
+						if (false === $regex && $c !== '/' && (!isset($requestUrl[$j]) || $c !== $requestUrl[$j])) {
+							continue 2;
+						}
+						$j++;
+					}
+					$route .= $_route[$i++];
+				}
+
+				$regex = $this->compileRoute($route);
+				$match = preg_match($regex, $requestUrl, $params);
+			}
+
+			if(($match == true || $match > 0)) {
+
+				if($params) {
+					foreach($params as $key => $value) {
+						if(is_numeric($key)) unset($params[$key]);
+					}
+				}
+
+				return array(
+					'params' => $params,
+					'action' => $name,
+					'url' => $requestUrl
+				);
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Compile the regex for a given route (EXPENSIVE)
+	 */
+	private function compileRoute($route) {
+		if (preg_match_all('`(/|\.|)\[([^:\]]*+)(?::([^:\]]*+))?\](\?|)`', $route, $matches, PREG_SET_ORDER)) {
+
+			$matchTypes = $this->matchTypes;
+			foreach ($matches as $match) {
+				list($block, $pre, $type, $param, $optional) = $match;
+
+				if (isset($matchTypes[$type])) {
+					$type = $matchTypes[$type];
+				}
+				if ($pre === '.') {
+					$pre = '\.';
+				}
+
+				//Older versions of PCRE require the 'P' in (?P<named>)
+				$pattern = '(?:'
+						. ($pre !== '' ? $pre : null)
+						. '('
+						. ($param !== '' ? "?P<$param>" : null)
+						. $type
+						. '))'
+						. ($optional !== '' ? '?' : null);
+
+				$route = str_replace($block, $pattern, $route);
+			}
+
+		}
+		return "`^$route$`";
+	}
+
+/***************************************************/	
+}
+
 
 //trace path start	
 global $paths,$base_url,$browser_path_complete, $base_path, $base_root,$browser_path_full,$browser_full_path,$browser_path,$browser_url,$theme_url,$theme_path,$site_theme;
 
-function conf_init() {
+function path_init() {
 global $paths,$base_url,$browser_path_complete, $base_path, $base_root,$browser_path_full,$browser_full_path,$browser_path,$browser_url,$theme_path,$site_theme,$theme_url,$theme_path;
 
   if (isset($_SERVER['HTTP_HOST'])) {
@@ -447,6 +741,20 @@ global $datapack;
 if(!empty($datapack)) {
 d($datapack);
 }
+}
+
+function exportToDataPack($arr) {
+global $datapack;
+if(!is_array($datapack)) {$datapack=Array();}
+foreach($arr as $key=>$val) {
+if(is_array($val)) {
+$datapack=array_merge($val,$datapack);
+} else {
+$datapack["$key"]=$val;
+}
+
+}
+
 }
 
 function get_valid_http_host($host) {
@@ -1180,7 +1488,63 @@ SCRIPTS;
 
 //variable debug ends	
 
+
 	
 	
 //library stops
+
+function setvar() {
+global $sitevars;
+if(!is_array($sitevars)) {$sitevars=Array();}
+$argc = func_num_args(); //arguments count
+$argv = func_get_args(); //arguments value
+if($argc==1) {
+$sitevars=array_merge($sitevars,$argv[0]);
+} else {
+$k=$argv[0];
+$v=$argv[1];
+$sitevars[$k]=$v;
+}
+return;
+}
+
+function getvar($varname) {
+global $sitevars;
+return $sitevars[$varname];
+}
+
+function is_var($varname) {
+global $sitevars;
+return isset($sitevars[$varname]);
+}
+
+function var_del($varname=null) {
+global $sitevars;
+if(is_null($varname)) {$sitevars=Array();} else {unset($sitevars[$varname]);}
+}
+
+function theme_varexport($name = null, $content = null)
+{
+  static $vname = null;
+  if(is_null($name) && !is_null($vname))
+  {
+    setvar($vname, ob_get_clean());
+    $vname = null;	
+  }
+  elseif(!is_null($name) && !isset($content))
+  {
+    $vname = $name;	
+    ob_start();
+  }
+  elseif(isset($name, $content))
+  {
+    setvar($name, $content);
+  }
+}
+
+function end_theme_varexport()
+{
+  theme_varexport();
+}
+
 ?>
