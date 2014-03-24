@@ -1,2 +1,3 @@
-This example further demonstrates how the framework handles linking using the l() function in the layout.php to automatically
-complete links when .htaccess is not present to enable url rewriting.
+## Example 03 - Basic & Advanced Routing Examples
+
+* (Online Demo)[http://dhtmlframework.com/examples/example03/index.php]
